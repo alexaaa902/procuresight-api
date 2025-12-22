@@ -117,7 +117,7 @@ def _ensure_loaded() -> None:
     if lgb is None:
         raise RuntimeError("LightGBM is not installed (missing lightgbm in requirements).")
 
-    model_dir = Path(__file__).resolve().parent / "model"
+    model_dir = Path(__file__).resolve().parent
     if not model_dir.exists():
         raise RuntimeError(f"Model dir not found: {model_dir}")
 
