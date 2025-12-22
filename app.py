@@ -1,3 +1,5 @@
+BUILD_ID = "RENDER_PROOF_123"
+
 from __future__ import annotations
 
 # ---------- Imports ----------
