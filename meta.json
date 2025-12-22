@@ -1,0 +1,73 @@
+{
+  "created_ts": "2025-09-14 17:39:47",
+  "data_path": "/content/drive/MyDrive/durations_final.parquet",
+  "split": {
+    "train_le": 2021,
+    "valid": 2022,
+    "test": 2023
+  },
+  "thresholds": {
+    "long_thr": 720.0,
+    "mid_thr": 365.0
+  },
+  "classifier": {
+    "scale_pos_weight": 2.222822229639065,
+    "tau": 0.39777,
+    "delta": 0.0,
+    "auc_valid": null
+  },
+  "tail_weight_long": {
+    "weight": 1.35,
+    "thr": 1080.0
+  },
+  "caps": {
+    "min": 0.0,
+    "max": 1800.0
+  },
+  "metrics": {
+    "valid": {
+      "MAE": 137.16727751091602,
+      "RMSE": 235.03218741814877,
+      "R2": 0.6890608750109339,
+      "MAPE": 93.34098792683233
+    },
+    "test": {
+      "MAE": 152.2541607994629,
+      "RMSE": 236.2272525457868,
+      "R2": 0.6435498355183134,
+      "MAPE": 51.472131483168546
+    },
+    "segMAE": {
+      "valid": {
+        "short": 380.3895496801324,
+        "long": 12.561722751297612
+      },
+      "test": {
+        "short": 360.60428328685794,
+        "long": 7.4922468717960236
+      }
+    },
+    "long_share": {
+      "valid_true": {
+        "ge365": 71.98800958162896,
+        "ge720": 66.12394559704522
+      },
+      "valid_pred": {
+        "ge365": 100.0,
+        "ge720": 79.14166804205568
+      },
+      "test_true": {
+        "ge365": 63.39829987137185,
+        "ge720": 59.003970695151274
+      },
+      "test_pred": {
+        "ge365": 100.0,
+        "ge720": 76.99653263240312
+      }
+    }
+  },
+  "go_no_go": {
+    "rules": "MAE ≤ 142.7d, R² ≥ 0.55, |Δlong≥720| ≤ 5pp overall; Per-segment MAE guards",
+    "decision_hint": "Evaluate based on printed metrics"
+  }
+}
