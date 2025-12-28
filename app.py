@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 # ---------- Imports ----------
-import os, json, math
+import os
+import json
+import math
+import hashlib
 from pathlib import Path
 from typing import Optional, Dict, Any
 
@@ -20,7 +23,7 @@ except Exception:
 BUILD_ID = "BUILD_2025_12_21_A"
 
 # =========================
-# 1) Health & Root
+# 1) App + CORS + Health/Root
 # =========================
 app = FastAPI(title="ProcureSight API", version="1.0")
 
@@ -56,7 +59,7 @@ def where() -> dict:
 
 
 # =========================
-# 2) Schemas
+# 2) Schemas  (NO target_duration)
 # =========================
 class PredictRequest(BaseModel):
     tender_country: Optional[str] = None
@@ -73,7 +76,7 @@ class PredictRequest(BaseModel):
     lot_bidsCount: Optional[float] = None
     tender_estimatedPrice_EUR_log: Optional[float] = None
     lot_bidsCount_log: Optional[float] = None
-    target_duration: Optional[float] = None
+    # ⚠️ target_duration removed (leakage)
 
 class PredictResponse(BaseModel):
     model_config = ConfigDict(protected_namespaces=())
@@ -82,7 +85,7 @@ class PredictResponse(BaseModel):
     risk_flag: bool
     model_used: str = "lgbm_2stage"
 
-    # τ σε ημέρες (UI threshold)
+    # UI threshold in days
     tau_days: float
 
     # internals
@@ -97,9 +100,8 @@ class PredictResponse(BaseModel):
 
 
 # =========================
-# 3) Helpers  (+ Loader εδώ)
+# 3) Globals / Loader / Helpers
 # =========================
-# globals loaded once
 _clf = None
 _reg_s = None
 _reg_l = None
@@ -107,14 +109,17 @@ _features: Dict[str, Any] = {}
 _meta: Dict[str, Any] = {}
 _LONG_THR_DEFAULT = 720.0
 
+
 def _ensure_loaded() -> None:
     global _clf, _reg_s, _reg_l, _features, _meta, _LONG_THR_DEFAULT
+
     if _clf is not None and _reg_s is not None and _reg_l is not None and _features:
         return
 
     if lgb is None:
         raise RuntimeError("LightGBM is not installed (missing lightgbm in requirements).")
 
+    # Render layout: artifacts next to this file (as in your current app)
     model_dir = Path(__file__).resolve().parent
     if not model_dir.exists():
         raise RuntimeError(f"Model dir not found: {model_dir}")
@@ -132,6 +137,7 @@ def _ensure_loaded() -> None:
             _meta = json.load(f)
         _LONG_THR_DEFAULT = float(_meta.get("long_threshold_days", _LONG_THR_DEFAULT))
 
+
 def _align_to_booster(X: pd.DataFrame, booster) -> pd.DataFrame:
     try:
         exp = list(booster.feature_name())
@@ -139,28 +145,33 @@ def _align_to_booster(X: pd.DataFrame, booster) -> pd.DataFrame:
         exp = None
     if not exp or any((n is None) or (n == "") for n in exp):
         return X
-    for c in exp:
-        if c not in X.columns:
-            X[c] = np.nan
+    missing = [c for c in exp if c not in X.columns]
+    for c in missing:
+        X[c] = np.nan
     return X[exp]
+
 
 def _derive_cpv_parts(s: pd.Series):
     s = s.astype(str).str.replace(r"[^\d]", "", regex=True).str.zfill(8)
     return pd.to_numeric(s.str[:2], errors="coerce"), pd.to_numeric(s.str[:3], errors="coerce")
 
+
 def _build_X(req: PredictRequest) -> pd.DataFrame:
     d = req.model_dump()
 
+    # Normalize
     d["tender_country"] = (d.get("tender_country") or "").upper().strip()
     if d.get("tender_mainCpv") is not None:
         d["tender_mainCpv"] = str(d["tender_mainCpv"]).strip()
 
     X = pd.DataFrame([d])
 
+    # Derived CPV parts
     if "tender_mainCpv" in X.columns and X["tender_mainCpv"].notna().any():
         div2, grp3 = _derive_cpv_parts(X["tender_mainCpv"])
         X["cpv_div2"], X["cpv_grp3"] = div2, grp3
 
+    # Align to training features.json
     feat_list = list(_features.get("features", []))
     cat_list = set(_features.get("categorical", []))
 
@@ -170,34 +181,46 @@ def _build_X(req: PredictRequest) -> pd.DataFrame:
     if feat_list:
         X = X[feat_list]
 
-    # auto log1p
+    # Auto log1p (keep if provided, but fix if missing/invalid)
     if "tender_estimatedPrice_EUR" in X.columns and "tender_estimatedPrice_EUR_log" in X.columns:
         base = pd.to_numeric(X["tender_estimatedPrice_EUR"], errors="coerce")
-        X["tender_estimatedPrice_EUR_log"] = np.log1p(base)
+        approx_ln = np.log1p(base)
+        given = pd.to_numeric(X["tender_estimatedPrice_EUR_log"], errors="coerce")
+        need_fix = given.isna() | ~np.isfinite(given) | (np.abs(given - approx_ln) > 2.5)
+        X.loc[need_fix, "tender_estimatedPrice_EUR_log"] = approx_ln
 
     if "lot_bidsCount" in X.columns and "lot_bidsCount_log" in X.columns:
         base = pd.to_numeric(X["lot_bidsCount"], errors="coerce")
-        X["lot_bidsCount_log"] = np.log1p(base)
+        approx_ln = np.log1p(base)
+        given = pd.to_numeric(X["lot_bidsCount_log"], errors="coerce")
+        need_fix = given.isna() | ~np.isfinite(given) | (np.abs(given - approx_ln) > 0.5)
+        X.loc[need_fix, "lot_bidsCount_log"] = approx_ln
 
-    #if "target_duration" in X.columns and X["target_duration"].isna().any():
-     #   X["target_duration"] = 700.0
+    # ⚠️ No target_duration defaults (feature must not exist)
 
     # dtypes
     for c in X.columns:
         if c in cat_list:
             X[c] = X[c].astype("string").str.strip().astype("category")
         else:
-            if not pd.api.types.is_numeric_dtype(X[c]):
+            if not pd.api.types.is_numeric_dtype(X[c]) and not pd.api.types.is_bool_dtype(X[c]):
                 X[c] = pd.to_numeric(X[c], errors="coerce")
+
+    # If something became category but shouldn't, coerce to numeric
+    for c in X.select_dtypes(include=["category"]).columns:
+        if c not in cat_list:
+            X[c] = pd.to_numeric(X[c].astype("string"), errors="coerce")
 
     if "tender_year" in X.columns:
         X["tender_year"] = pd.to_numeric(X["tender_year"], errors="coerce")
 
     return X
 
+
 def _combine_hard(p_long: float, y_short: float, y_long: float, tau_prob: float) -> float:
-    out = y_long if (p_long >= tau_prob) else y_short
+    out = y_long if (float(p_long) >= float(tau_prob)) else y_short
     return float(np.clip(out, 1.0, 1800.0))
+
 
 def _year_bump(year: Optional[int]) -> float:
     if year is None or not _meta:
@@ -216,16 +239,60 @@ def _year_bump(year: Optional[int]) -> float:
         val += float(a) * (y ** i)
     return float(np.clip(val, 0.0, max_b))
 
+
 def _apply_year_bump(yhat: float, year: Optional[int]) -> float:
     b = _year_bump(year)
     LOW, HIGH, CENTER, SNAP_FROM, SNAP_TO = 670.0, 720.0, 720.0, 715.0, 720.0
-    if yhat < LOW or yhat >= HIGH or b <= 0:
-        return float(yhat)
-    w = (yhat - LOW) / max(CENTER - LOW, 1e-9)
-    y2 = yhat + b * max(min(w, 1.0), 0.0)
+    yh = float(yhat)
+    if yh < LOW or yh >= HIGH or b <= 0:
+        return yh
+    w = (yh - LOW) / max(CENTER - LOW, 1e-9)
+    y2 = yh + b * max(min(w, 1.0), 0.0)
     if SNAP_FROM <= y2 < SNAP_TO:
         y2 = SNAP_TO
     return float(y2)
+
+
+# =========================
+# 3b) model_info endpoint (Render debugging)
+# =========================
+def _sha1(p: Path) -> str:
+    h = hashlib.sha1()
+    with open(p, "rb") as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b""):
+            h.update(chunk)
+    return h.hexdigest()[:12]
+
+
+@app.get("/model_info")
+def model_info():
+    _ensure_loaded()
+    model_dir = Path(__file__).resolve().parent
+    files = {
+        "stage1_classifier.txt": model_dir / "stage1_classifier.txt",
+        "stage2_reg_short.txt": model_dir / "stage2_reg_short.txt",
+        "stage2_reg_long.txt": model_dir / "stage2_reg_long.txt",
+        "features.json": model_dir / "features.json",
+        "meta.json": model_dir / "meta.json",
+    }
+    info: Dict[str, Any] = {}
+    for k, p in files.items():
+        info[k] = {
+            "exists": p.exists(),
+            "size": p.stat().st_size if p.exists() else None,
+            "mtime": p.stat().st_mtime if p.exists() else None,
+            "sha1": _sha1(p) if p.exists() else None,
+        }
+
+    return {
+        "build": BUILD_ID,
+        "file": __file__,
+        "cwd": os.getcwd(),
+        "long_thr_default": float(_LONG_THR_DEFAULT),
+        "tau_prob": float(_meta.get("tau", 0.5)) if _meta else None,
+        "n_features": len(_features.get("features", [])) if _features else None,
+        "files": info,
+    }
 
 
 # =========================
@@ -236,14 +303,24 @@ def predict(req: PredictRequest, tau: Optional[float] = Query(None, description=
     try:
         _ensure_loaded()
 
-        tau_days = float(tau) if tau is not None else float(_LONG_THR_DEFAULT)
-        tau_prob = float(_meta.get("tau", 0.5))
+        # tau days (UI)
+        try:
+            tau_days = float(tau) if tau is not None else float(_LONG_THR_DEFAULT)
+        except Exception:
+            tau_days = float(_LONG_THR_DEFAULT)
 
+        # routing prob threshold
+        tau_prob = float(_meta.get("tau", 0.5)) if _meta else 0.5
+
+        # build features
         X = _build_X(req)
+
+        # align per booster
         Xc = _align_to_booster(X.copy(), _clf)
         Xs = _align_to_booster(X.copy(), _reg_s)
         Xl = _align_to_booster(X.copy(), _reg_l)
 
+        # predict
         p = float(_clf.predict(Xc)[0])
         if (p is None) or (not math.isfinite(p)):
             p = 0.0
@@ -251,6 +328,7 @@ def predict(req: PredictRequest, tau: Optional[float] = Query(None, description=
         y_short = float(_reg_s.predict(Xs)[0])
         y_long  = float(_reg_l.predict(Xl)[0])
 
+        # combine + bump
         yhat = _combine_hard(p, y_short, y_long, tau_prob)
         yhat = _apply_year_bump(yhat, req.tender_year)
 
@@ -263,42 +341,45 @@ def predict(req: PredictRequest, tau: Optional[float] = Query(None, description=
             tau_days=float(tau_days),
             p_long=float(p),
             tau_prob=float(tau_prob),
-            stage_used=stage_used,
+            stage_used=str(stage_used),
             pred_short=float(y_short),
             pred_long=float(y_long),
             build=BUILD_ID,
         )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.post("/predict_debug")
 def predict_debug(req: PredictRequest):
-    _ensure_models_loaded()
-    X = _build_dataframe(req)
+    _ensure_loaded()
 
-    Xc = _align_to_booster(X.copy(), clf)
-    Xs = _align_to_booster(X.copy(), reg_short)
-    Xl = _align_to_booster(X.copy(), reg_long)
+    X = _build_X(req)
 
-    def row_dict(df):
+    Xc = _align_to_booster(X.copy(), _clf)
+    Xs = _align_to_booster(X.copy(), _reg_s)
+    Xl = _align_to_booster(X.copy(), _reg_l)
+
+    def row_dict(df: pd.DataFrame):
         return {k: (None if (pd.isna(v) or v is pd.NA) else v) for k, v in df.iloc[0].to_dict().items()}
 
     return {
         "raw_X_cols": list(X.columns),
         "raw_X_row": row_dict(X),
 
+        "clf_expected": list(_clf.feature_name()) if _clf is not None else None,
+        "short_expected": list(_reg_s.feature_name()) if _reg_s is not None else None,
+        "long_expected": list(_reg_l.feature_name()) if _reg_l is not None else None,
+
         "clf_cols": list(Xc.columns),
-        "clf_row": row_dict(Xc),
-
         "short_cols": list(Xs.columns),
-        "short_row": row_dict(Xs),
-
         "long_cols": list(Xl.columns),
-        "long_row": row_dict(Xl),
 
-        "clf_expected": list(clf.feature_name()) if clf is not None else None,
-        "short_expected": list(reg_short.feature_name()) if reg_short is not None else None,
-        "long_expected": list(reg_long.feature_name()) if reg_long is not None else None,
+        "clf_row": row_dict(Xc),
+        "short_row": row_dict(Xs),
+        "long_row": row_dict(Xl),
     }
 
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
