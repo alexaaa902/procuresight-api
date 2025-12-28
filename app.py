@@ -20,7 +20,7 @@ try:
 except Exception:
     lgb = None
 
-BUILD_ID = "BUILD_2025_12_21_A"
+BUILD_ID = "BUILD_TEST_2025_12_28_X"
 
 # =========================
 # 1) App + CORS + Health/Root
