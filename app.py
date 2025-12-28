@@ -110,23 +110,26 @@ _meta: Dict[str, Any] = {}
 _LONG_THR_DEFAULT = 720.0
 
 
+def _load_lgb_txt(path: Path):
+    s = path.read_text(encoding="utf-8", errors="replace")
+    s = s.lstrip("\ufeff").lstrip()  # remove UTF-8 BOM + leading whitespace
+    if not s.startswith("tree"):
+        raise RuntimeError(f"Not a LightGBM text model: {path.name}. First chars: {s[:80]!r}")
+    return lgb.Booster(model_str=s)
+
 def _ensure_loaded() -> None:
     global _clf, _reg_s, _reg_l, _features, _meta, _LONG_THR_DEFAULT
 
     if _clf is not None and _reg_s is not None and _reg_l is not None and _features:
         return
-
     if lgb is None:
         raise RuntimeError("LightGBM is not installed (missing lightgbm in requirements).")
 
-    # Render layout: artifacts next to this file (as in your current app)
     model_dir = Path(__file__).resolve().parent
-    if not model_dir.exists():
-        raise RuntimeError(f"Model dir not found: {model_dir}")
 
-    _clf   = lgb.Booster(model_file=str(model_dir / "stage1_classifier.txt"))
-    _reg_s = lgb.Booster(model_file=str(model_dir / "stage2_reg_short.txt"))
-    _reg_l = lgb.Booster(model_file=str(model_dir / "stage2_reg_long.txt"))
+    _clf   = _load_lgb_txt(model_dir / "stage1_classifier.txt")
+    _reg_s = _load_lgb_txt(model_dir / "stage2_reg_short.txt")
+    _reg_l = _load_lgb_txt(model_dir / "stage2_reg_long.txt")
 
     with open(model_dir / "features.json", "r", encoding="utf-8") as f:
         _features = json.load(f)
