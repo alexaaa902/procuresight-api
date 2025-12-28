@@ -286,17 +286,18 @@ def model_info():
             "mtime": p.stat().st_mtime if p.exists() else None,
             "sha1": _sha1(p) if p.exists() else None,
         }
-
+        
+    tau_prob = float(_meta.get("tau", 0.5)) if _meta else 0.5
+    tau_prob = min(tau_prob, 0.35)
     return {
         "build": BUILD_ID,
         "file": __file__,
         "cwd": os.getcwd(),
         "long_thr_default": float(_LONG_THR_DEFAULT),
-        "tau_prob": float(_meta.get("tau", 0.5)) if _meta else None,
+        "tau_prob": tau_prob,
         "n_features": len(_features.get("features", [])) if _features else None,
         "files": info,
     }
-
 
 # =========================
 # 4) Predict
