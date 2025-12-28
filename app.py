@@ -219,9 +219,6 @@ def _build_X(req: PredictRequest) -> pd.DataFrame:
 
     return X
 
-def _combine_hard(p_long: float, y_short: float, y_long: float, tau_prob: float, tau_days: float) -> float:
-    # routing based on predicted duration vs threshold (more "logical" to users)
-    use_long = float(y_short) >= float(tau_days)
     out = y_long if use_long else y_short
     return float(np.clip(out, 1.0, 1800.0))
 
@@ -317,6 +314,12 @@ def predict(req: PredictRequest, tau: Optional[float] = Query(None, description=
         # build features
         X = _build_X(req)
 
+        Xc = _align_to_booster(X.copy(), _clf)
+        p_long = float(_clf.predict(Xc)[0])
+        if not math.isfinite(p_long):
+            p_long = float("nan")
+        tau_prob = float(_meta.get("tau", 0.5)) if _meta else 0.5
+
         # align per booster
         Xs = _align_to_booster(X.copy(), _reg_s)
         Xl = _align_to_booster(X.copy(), _reg_l)
@@ -337,8 +340,8 @@ def predict(req: PredictRequest, tau: Optional[float] = Query(None, description=
         risk_flag = bool(yhat >= tau_days)
 
         # We keep these for UI/debug compatibility, but they no longer drive routing
-        p_long = float("nan")
-        tau_prob = float(_meta.get("tau", 0.5)) if _meta else 0.5
+        #p_long = float("nan")
+        #tau_prob = float(_meta.get("tau", 0.5)) if _meta else 0.5
 
         return PredictResponse(
             predicted_days=float(yhat),
