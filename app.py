@@ -219,9 +219,6 @@ def _build_X(req: PredictRequest) -> pd.DataFrame:
 
     return X
 
-    out = y_long if use_long else y_short
-    return float(np.clip(out, 1.0, 1800.0))
-
 
 def _year_bump(year: Optional[int]) -> float:
     if year is None or not _meta:
@@ -317,7 +314,7 @@ def predict(req: PredictRequest, tau: Optional[float] = Query(None, description=
         Xc = _align_to_booster(X.copy(), _clf)
         p_long = float(_clf.predict(Xc)[0])
         if not math.isfinite(p_long):
-            p_long = float("nan")
+            p_long = 0.0   
         tau_prob = float(_meta.get("tau", 0.5)) if _meta else 0.5
 
         # align per booster
