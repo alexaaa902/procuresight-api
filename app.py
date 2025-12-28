@@ -289,6 +289,7 @@ def model_info():
         
     tau_prob = float(_meta.get("tau", 0.5)) if _meta else 0.5
     tau_prob = min(tau_prob, 0.35)
+    
     return {
         "build": BUILD_ID,
         "file": __file__,
@@ -315,6 +316,8 @@ def predict(req: PredictRequest, tau: Optional[float] = Query(None, description=
 
         # routing prob threshold
         tau_prob = float(_meta.get("tau", 0.5)) if _meta else 0.5
+        tau_prob = min(tau_prob, 0.35)
+
 
         # build features
         X = _build_X(req)
