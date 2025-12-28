@@ -313,7 +313,7 @@ def predict(req: PredictRequest, tau: Optional[float] = Query(None, description=
 
         Xc = _align_to_booster(X.copy(), _clf)
         p_long = float(_clf.predict(Xc)[0])
-        if not math.isfinite(p_long):
+        if not np.isfinite(p_long):
             p_long = 0.0   
         tau_prob = float(_meta.get("tau", 0.5)) if _meta else 0.5
 
