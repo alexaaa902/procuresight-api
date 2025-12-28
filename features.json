@@ -1,6 +1,5 @@
 {
-  "feature_columns": [
-    "target_duration",
+  "features": [
     "tender_procedureType",
     "tender_supplyType",
     "tender_mainCpv",
@@ -8,18 +7,6 @@
     "tender_year",
     "buyer_buyerType",
     "buyer_country",
-    "tender_estimatedPrice_EUR",
-    "lot_bidsCount",
-    "tender_indicator_score_INTEGRITY",
-    "tender_indicator_score_ADMINISTRATIVE",
-    "tender_indicator_score_TRANSPARENCY",
-    "tender_estimatedPrice_EUR_log",
-    "lot_bidsCount_log"
-  ],
-  "numeric": [
-    "target_duration",
-    "tender_mainCpv",
-    "tender_year",
     "tender_estimatedPrice_EUR",
     "lot_bidsCount",
     "tender_indicator_score_INTEGRITY",
