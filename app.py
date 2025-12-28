@@ -314,33 +314,13 @@ def predict(req: PredictRequest, tau: Optional[float] = Query(None, description=
         except Exception:
             tau_days = float(_LONG_THR_DEFAULT)
 
-        # routing prob threshold
-        tau_prob = float(_meta.get("tau", 0.5)) if _meta else 0.5
+        # UI threshold in days (already computed above as tau_days)
+        use_long = (y_short >= tau_days)  # routing based on 720-days rule
+        yhat = y_long if use_long else y_short
 
-
-        # build features
-        X = _build_X(req)
-
-        # align per booster
-        Xc = _align_to_booster(X.copy(), _clf)
-        Xs = _align_to_booster(X.copy(), _reg_s)
-        Xl = _align_to_booster(X.copy(), _reg_l)
-
-        # predict
-        p = float(_clf.predict(Xc)[0])
-        if (p is None) or (not math.isfinite(p)):
-            p = 0.0
-
-        y_short = float(_reg_s.predict(Xs)[0])
-        y_long  = float(_reg_l.predict(Xl)[0])
-
-        # combine + bump
-        yhat = _combine_hard(p, y_short, y_long, tau_prob, tau_days)
-        yhat = _apply_year_bump(yhat, req.tender_year)
-
-        stage_used = "long_reg" if (y_short >= tau_days) else "short_reg"
-
+        stage_used = "long_reg" if use_long else "short_reg"
         risk_flag = bool(yhat >= tau_days)
+
 
         return PredictResponse(
             predicted_days=float(yhat),
