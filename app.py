@@ -313,28 +313,24 @@ def predict(req: PredictRequest, tau: Optional[float] = Query(None, description=
 
         Xc = _align_to_booster(X.copy(), _clf)
         p_long = float(_clf.predict(Xc)[0])
-        if not np.isfinite(p_long):
+        if not np.isfinite(p_long):    
             p_long = 0.0   
         tau_prob = float(_meta.get("tau", 0.5)) if _meta else 0.5
 
-        # align per booster
         Xs = _align_to_booster(X.copy(), _reg_s)
         Xl = _align_to_booster(X.copy(), _reg_l)
-
-        # predict both regressors
         y_short = float(_reg_s.predict(Xs)[0])
         y_long  = float(_reg_l.predict(Xl)[0])
 
-        # routing rule you asked for: based on 720-days threshold
-        use_long = (y_short >= tau_days)
+        use_long = (p_long >= tau_prob)
         yhat = y_long if use_long else y_short
 
-        # optional year bump + clamp
         yhat = _apply_year_bump(yhat, req.tender_year)
         yhat = float(np.clip(yhat, 1.0, 1800.0))
 
         stage_used = "long_reg" if use_long else "short_reg"
         risk_flag = bool(yhat >= tau_days)
+
 
         # We keep these for UI/debug compatibility, but they no longer drive routing
         #p_long = float("nan")
