@@ -314,23 +314,43 @@ def predict(req: PredictRequest, tau: Optional[float] = Query(None, description=
         except Exception:
             tau_days = float(_LONG_THR_DEFAULT)
 
-        # UI threshold in days (already computed above as tau_days)
-        use_long = (y_short >= tau_days)  # routing based on 720-days rule
+        # build features
+        X = _build_X(req)
+
+        # align per booster
+        Xs = _align_to_booster(X.copy(), _reg_s)
+        Xl = _align_to_booster(X.copy(), _reg_l)
+
+        # predict both regressors
+        y_short = float(_reg_s.predict(Xs)[0])
+        y_long  = float(_reg_l.predict(Xl)[0])
+
+        # routing rule you asked for: based on 720-days threshold
+        use_long = (y_short >= tau_days)
         yhat = y_long if use_long else y_short
+
+        # optional year bump + clamp
+        yhat = _apply_year_bump(yhat, req.tender_year)
+        yhat = float(np.clip(yhat, 1.0, 1800.0))
 
         stage_used = "long_reg" if use_long else "short_reg"
         risk_flag = bool(yhat >= tau_days)
 
+        # We keep these for UI/debug compatibility, but they no longer drive routing
+        p_long = float("nan")
+        tau_prob = float(_meta.get("tau", 0.5)) if _meta else 0.5
 
         return PredictResponse(
             predicted_days=float(yhat),
-            risk_flag=risk_flag,
+            risk_flag=bool(risk_flag),
             tau_days=float(tau_days),
-            p_long=float(p),
+
+            p_long=float(p_long),
             tau_prob=float(tau_prob),
             stage_used=str(stage_used),
             pred_short=float(y_short),
             pred_long=float(y_long),
+
             build=BUILD_ID,
         )
 
