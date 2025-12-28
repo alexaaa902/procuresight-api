@@ -219,9 +219,10 @@ def _build_X(req: PredictRequest) -> pd.DataFrame:
 
     return X
 
-
-def _combine_hard(p_long: float, y_short: float, y_long: float, tau_prob: float) -> float:
-    out = y_long if (float(p_long) >= float(tau_prob)) else y_short
+def _combine_hard(p_long: float, y_short: float, y_long: float, tau_prob: float, tau_days: float) -> float:
+    # routing based on predicted duration vs threshold (more "logical" to users)
+    use_long = float(y_short) >= float(tau_days)
+    out = y_long if use_long else y_short
     return float(np.clip(out, 1.0, 1800.0))
 
 
@@ -288,7 +289,6 @@ def model_info():
         }
         
     tau_prob = float(_meta.get("tau", 0.5)) if _meta else 0.5
-    tau_prob = min(tau_prob, 0.35)
     
     return {
         "build": BUILD_ID,
@@ -316,7 +316,6 @@ def predict(req: PredictRequest, tau: Optional[float] = Query(None, description=
 
         # routing prob threshold
         tau_prob = float(_meta.get("tau", 0.5)) if _meta else 0.5
-        tau_prob = min(tau_prob, 0.35)
 
 
         # build features
@@ -336,10 +335,11 @@ def predict(req: PredictRequest, tau: Optional[float] = Query(None, description=
         y_long  = float(_reg_l.predict(Xl)[0])
 
         # combine + bump
-        yhat = _combine_hard(p, y_short, y_long, tau_prob)
+        yhat = _combine_hard(p, y_short, y_long, tau_prob, tau_days)
         yhat = _apply_year_bump(yhat, req.tender_year)
 
-        stage_used = "long_reg" if (p >= tau_prob) else "short_reg"
+        stage_used = "long_reg" if (y_short >= tau_days) else "short_reg"
+
         risk_flag = bool(yhat >= tau_days)
 
         return PredictResponse(
