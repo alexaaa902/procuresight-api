@@ -179,8 +179,8 @@ def _build_X(req: PredictRequest) -> pd.DataFrame:
         base = pd.to_numeric(X["lot_bidsCount"], errors="coerce")
         X["lot_bidsCount_log"] = np.log1p(base)
 
-    if "target_duration" in X.columns and X["target_duration"].isna().any():
-        X["target_duration"] = 700.0
+    #if "target_duration" in X.columns and X["target_duration"].isna().any():
+     #   X["target_duration"] = 700.0
 
     # dtypes
     for c in X.columns:
